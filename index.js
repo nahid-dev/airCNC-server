@@ -1,6 +1,7 @@
 const express = require("express");
 const app = express();
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const port = process.env.PORT || 5000;
 
@@ -24,11 +25,44 @@ const client = new MongoClient(uri, {
   },
 });
 
+// validate jwt
+const verifyJWT = (req, res, next) => {
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    return res
+      .status(401)
+      .send({ error: true, message: "Unauthorized access" });
+  }
+  // token verify
+  const token = authorization.split(" ")[1];
+  console.log(token);
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res
+        .status(401)
+        .send({ error: true, message: "Unauthorized access" });
+    }
+    req.decoded = decoded;
+    next();
+  });
+};
+
 async function run() {
   try {
     const usersCollection = client.db("aircncDb").collection("users");
     const roomsCollection = client.db("aircncDb").collection("rooms");
     const bookingsCollection = client.db("aircncDb").collection("bookings");
+
+    // Generate jwt token
+    app.post("/jwt", (req, res) => {
+      const email = req.body;
+      // console.log(email);
+      const token = jwt.sign(email, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: "1h",
+      });
+      // console.log(token);
+      res.send({ token });
+    });
 
     //   save user email role in DB
     app.put("/users/:email", async (req, res) => {
@@ -57,8 +91,15 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/rooms/:email", async (req, res) => {
+    app.get("/rooms/:email", verifyJWT, async (req, res) => {
+      const decodedEmail = req.decoded.email;
+
       const email = req.params.email;
+      if (email !== decodedEmail) {
+        return res
+          .status(403)
+          .send({ error: true, message: "Forbidden access" });
+      }
       const query = { "host.email": email };
       const result = await roomsCollection.find(query).toArray();
       // console.log(result);
@@ -114,7 +155,6 @@ async function run() {
       res.send(result);
     });
 
-
     // Get bookings host:
     app.get("/bookings/host", async (req, res) => {
       const email = req.query.email;
@@ -123,11 +163,10 @@ async function run() {
       if (!email) {
         res.send([]);
       }
-      const query = { host : email };
+      const query = { host: email };
       const result = await bookingsCollection.find(query).toArray();
       res.send(result);
     });
-
 
     // save data booking
     app.post("/bookings", async (req, res) => {
